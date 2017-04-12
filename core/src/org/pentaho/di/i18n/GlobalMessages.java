@@ -38,11 +38,10 @@ import org.pentaho.di.core.Const;
 import org.pentaho.di.core.exception.KettleException;
 import org.pentaho.di.core.logging.LogChannel;
 import org.pentaho.di.core.logging.LogChannelInterface;
+import org.pentaho.util.locale.LocaleResolver;
 
 public class GlobalMessages extends AbstractMessageHandler {
   private static String packageNM = GlobalMessages.class.getPackage().getName();
-
-  protected static final ThreadLocal<Locale> threadLocales = new ThreadLocal<Locale>();
 
   protected static final LanguageChoice langChoice = LanguageChoice.getInstance();
 
@@ -84,7 +83,7 @@ public class GlobalMessages extends AbstractMessageHandler {
   }
 
   public static synchronized Locale getLocale() {
-    Locale rtn = threadLocales.get();
+    Locale rtn = LocaleResolver.getLocaleOverride();
     if ( rtn != null ) {
       return rtn;
     }
@@ -94,7 +93,7 @@ public class GlobalMessages extends AbstractMessageHandler {
   }
 
   public static synchronized void setLocale( Locale newLocale ) {
-    threadLocales.set( newLocale );
+    LocaleResolver.setLocaleOverride( newLocale );
   }
 
   protected static String getLocaleString( Locale locale ) {
@@ -231,9 +230,11 @@ public class GlobalMessages extends AbstractMessageHandler {
   protected String calculateString( String packageName, String key, Object[] parameters, Class<?> resourceClass ) {
     String string = null;
 
+    Locale currentLocale = getLocale();
+
     // First try the standard locale, in the local package
     try {
-      string = findString( packageName, langChoice.getDefaultLocale(), key, parameters, resourceClass );
+      string = findString( packageName, currentLocale, key, parameters, resourceClass );
     } catch ( MissingResourceException e ) { /* Ignore */
     }
     if ( string != null ) {
@@ -242,7 +243,7 @@ public class GlobalMessages extends AbstractMessageHandler {
 
     // Then try to find it in the i18n package, in the system messages of the preferred language.
     try {
-      string = findString( SYSTEM_BUNDLE_PACKAGE, langChoice.getDefaultLocale(), key, parameters, resourceClass );
+      string = findString( SYSTEM_BUNDLE_PACKAGE, currentLocale, key, parameters, resourceClass );
     } catch ( MissingResourceException e ) { /* Ignore */
     }
     if ( string != null ) {

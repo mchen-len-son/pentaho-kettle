@@ -22,6 +22,7 @@
 
 package org.pentaho.di.i18n;
 
+import java.util.Locale;
 import java.util.MissingResourceException;
 
 import org.pentaho.di.core.Const;
@@ -85,9 +86,11 @@ public class LAFMessageHandler extends GlobalMessages {
     Class<?> resourceClass ) {
     String string = null;
 
+    Locale currentLocale = getLocale();
+
     // Then try the original package
     try {
-      string = findString( packageName, langChoice.getDefaultLocale(), key, parameters, resourceClass );
+      string = findString( packageName, currentLocale, key, parameters, resourceClass );
     } catch ( MissingResourceException e ) { /* Ignore */
     }
     if ( string != null ) {
@@ -97,7 +100,7 @@ public class LAFMessageHandler extends GlobalMessages {
 
     // Then try to find it in the i18n package, in the system messages of the preferred language.
     try {
-      string = findString( global, langChoice.getDefaultLocale(), key, parameters, resourceClass );
+      string = findString( global, currentLocale, key, parameters, resourceClass );
     } catch ( MissingResourceException e ) { /* Ignore */
     }
     if ( string != null ) {

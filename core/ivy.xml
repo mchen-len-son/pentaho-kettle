@@ -31,6 +31,7 @@
     <dependency org="com.google.guava"    name="guava"               rev="17.0"            transitive="false"/>
 
     <dependency org="pentaho"             name="metastore"           rev="${dependency.pentaho-metastore.revision}"   changing="true"/>
+    <dependency org="pentaho"             name="locale-resolver"     rev="${project.revision}" transitive="false"/>
     
     <dependency org="org.apache.commons"  name="commons-compress"    rev="1.4.1"              transitive="false"/>
     <dependency org="dom4j"               name="dom4j"               rev="1.6.1"            transitive="false"/>

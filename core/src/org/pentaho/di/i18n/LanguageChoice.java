@@ -30,6 +30,7 @@ import java.util.Properties;
 
 import org.pentaho.di.core.Const;
 import org.pentaho.di.core.util.EnvUtil;
+import org.pentaho.util.locale.LocaleResolver;
 
 public class LanguageChoice {
   private static final String STRING_FAILOVER_LOCALE = "LocaleFailover";
@@ -37,24 +38,24 @@ public class LanguageChoice {
 
   private static LanguageChoice choice;
 
-  private Locale defaultLocale;
-  private Locale failoverLocale;
-
   private LanguageChoice() {
     try {
       loadSettings();
     } catch ( IOException e ) {
       // Can't load settings: set the default
-      defaultLocale = Const.DEFAULT_LOCALE;
-      failoverLocale = Locale.US;
+      Locale defaultLocale = Const.DEFAULT_LOCALE;
+      Locale failOverLocale = Locale.US;
 
       if ( defaultLocale.getLanguage().equals( Locale.GERMAN.getLanguage() ) ) {
         defaultLocale = Locale.US;
       }
+
+      setDefaultLocale( defaultLocale );
+      setFailoverLocale( failOverLocale );
     }
   }
 
-  public static final LanguageChoice getInstance() {
+  public static LanguageChoice getInstance() {
     if ( choice != null ) {
       return choice;
     }
@@ -68,7 +69,7 @@ public class LanguageChoice {
    * @return Returns the defaultLocale.
    */
   public Locale getDefaultLocale() {
-    return defaultLocale;
+    return LocaleResolver.getDefaultLocale();
   }
 
   /**
@@ -76,14 +77,14 @@ public class LanguageChoice {
    *          The defaultLocale to set.
    */
   public void setDefaultLocale( Locale defaultLocale ) {
-    this.defaultLocale = defaultLocale;
+    LocaleResolver.setDefaultLocale( defaultLocale );
   }
 
   /**
    * @return Returns the failoverLocale.
    */
   public Locale getFailoverLocale() {
-    return failoverLocale;
+    return LocaleResolver.getFailOverLocale();
   }
 
   /**
@@ -91,7 +92,7 @@ public class LanguageChoice {
    *          The failoverLocale to set.
    */
   public void setFailoverLocale( Locale failoverLocale ) {
-    this.failoverLocale = failoverLocale;
+    LocaleResolver.setFailOverLocale( failoverLocale );
   }
 
   private void loadSettings() throws IOException {
@@ -108,17 +109,17 @@ public class LanguageChoice {
     }
 
     String defaultLocaleStr = properties.getProperty( STRING_DEFAULT_LOCALE, Const.DEFAULT_LOCALE.toString() );
-    defaultLocale = EnvUtil.createLocale( defaultLocaleStr );
+    setDefaultLocale( EnvUtil.createLocale( defaultLocaleStr ) );
 
     String failoverLocaleStr = properties.getProperty( STRING_FAILOVER_LOCALE, "en_US" );
-    failoverLocale = EnvUtil.createLocale( failoverLocaleStr );
+    setFailoverLocale( EnvUtil.createLocale( failoverLocaleStr ) );
   }
 
   public void saveSettings() {
     try {
       Properties properties = new Properties();
-      properties.setProperty( STRING_DEFAULT_LOCALE, defaultLocale.toString() );
-      properties.setProperty( STRING_FAILOVER_LOCALE, failoverLocale.toString() );
+      properties.setProperty( STRING_DEFAULT_LOCALE, getDefaultLocale().toString() );
+      properties.setProperty( STRING_FAILOVER_LOCALE, getFailoverLocale().toString() );
       properties.store( new FileOutputStream( getSettingsFilename() ), "Language Choice" );
     } catch ( IOException e ) {
       // Ignore
