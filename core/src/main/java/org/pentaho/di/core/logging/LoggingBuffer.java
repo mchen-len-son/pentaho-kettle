@@ -24,10 +24,12 @@ package org.pentaho.di.core.logging;
 
 import org.pentaho.di.core.Const;
 
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -39,7 +41,8 @@ import java.util.stream.Stream;
 public class LoggingBuffer {
   private String name;
 
-  private LinkedBlockingDeque<BufferLine> buffer;
+  private List<BufferLine> buffer;
+  private ReadWriteLock lock = new ReentrantReadWriteLock();
 
   private int bufferSize;
 
@@ -51,17 +54,25 @@ public class LoggingBuffer {
 
   public LoggingBuffer( int bufferSize ) {
     this.bufferSize = bufferSize;
-    buffer = new LinkedBlockingDeque<BufferLine>();
+    buffer = new ArrayList<>();
     layout = new KettleLogLayout( true );
-    eventListeners = new CopyOnWriteArrayList<KettleLoggingEventListener>();
+    eventListeners = new CopyOnWriteArrayList<>();
   }
 
   /**
    * @return the number (sequence, 1..N) of the last log line. If no records are present in the buffer, 0 is returned.
    */
   public int getLastBufferLineNr() {
-    BufferLine line = buffer.peekLast();
-    return line != null ? line.getNr() : 0;
+    lock.readLock().lock();
+    try {
+      if (buffer.size() > 0) {
+        BufferLine line = buffer.get( buffer.size() - 1 );
+        return line != null ? line.getNr() : 0;
+      }
+      return 0;
+    } finally {
+      lock.readLock().unlock();
+    }
   }
 
   /**
@@ -73,14 +84,19 @@ public class LoggingBuffer {
    */
   public List<KettleLoggingEvent> getLogBufferFromTo( List<String> channelId, boolean includeGeneral, int from,
                                                       int to ) {
-    Stream<BufferLine> bufferStream = buffer.stream().filter( line -> line.getNr() > from && line.getNr() <= to );
-    if ( channelId != null ) {
-      bufferStream = bufferStream.filter( line -> {
-        String logChannelId = getLogChId( line );
-        return includeGeneral ? isGeneral( logChannelId ) || channelId.contains( logChannelId ) : channelId.contains( logChannelId );
-      } );
+    lock.readLock().lock();
+    try {
+      Stream<BufferLine> bufferStream = buffer.stream().filter( line -> line.getNr() > from && line.getNr() <= to );
+      if ( channelId != null ) {
+        bufferStream = bufferStream.filter( line -> {
+          String logChannelId = getLogChId( line );
+          return includeGeneral ? isGeneral( logChannelId ) || channelId.contains( logChannelId ) : channelId.contains( logChannelId );
+        } );
+      }
+      return bufferStream.map( BufferLine::getEvent ).collect( Collectors.toList() );
+    } finally {
+      lock.readLock().unlock();
     }
-    return bufferStream.map( BufferLine::getEvent ).collect( Collectors.toList() );
   }
 
   /**
@@ -131,9 +147,14 @@ public class LoggingBuffer {
 
   public void doAppend( KettleLoggingEvent event ) {
     if ( event.getMessage() instanceof LogMessage ) {
-      buffer.add( new BufferLine( event ) );
-      while ( bufferSize > 0 && buffer.size() > bufferSize ) {
-        buffer.poll();
+      lock.writeLock().lock();
+      try {
+        buffer.add( new BufferLine( event ) );
+        while ( bufferSize > 0 && buffer.size() > bufferSize ) {
+          buffer.remove( 0 );
+        }
+      } finally {
+        lock.writeLock().unlock();
       }
     }
   }
@@ -189,7 +210,12 @@ public class LoggingBuffer {
    * @param id the id of the logging channel to remove
    */
   public void removeChannelFromBuffer( String id ) {
-    buffer.removeIf( line -> id.equals( getLogChId( line ) ) );
+    lock.writeLock().lock();
+    try {
+      buffer.removeIf( line -> id.equals( getLogChId( line ) ) );
+    } finally {
+      lock.writeLock().unlock();
+    }
   }
 
   public int size() {
@@ -197,9 +223,21 @@ public class LoggingBuffer {
   }
 
   public void removeGeneralMessages() {
-    buffer.removeIf( line -> isGeneral( getLogChId( line ) ) );
+    lock.writeLock().lock();
+    try {
+      buffer.removeIf( line -> isGeneral( getLogChId( line ) ) );
+    } finally {
+      lock.writeLock().unlock();
+    }
   }
 
+  /**
+   * We should not expose iterator out of the class.
+   * Looks like it's only used in tests.
+   *
+   * Marked deprecated for now. To be made package-level in future.
+   */
+  @Deprecated
   public Iterator<BufferLine> getBufferIterator() {
     return buffer.iterator();
   }
@@ -210,25 +248,45 @@ public class LoggingBuffer {
   @Deprecated
   public String dump() {
     StringBuilder buf = new StringBuilder( 50000 );
-    buffer.forEach( line -> {
-      LogMessage message = (LogMessage) line.getEvent().getMessage();
-      buf.append( message.getLogChannelId() ).append( "\t" )
-        .append( message.getSubject() ).append( "\n" );
-    } );
-    return buf.toString();
+    lock.readLock().lock();
+    try {
+      buffer.forEach( line -> {
+        LogMessage message = (LogMessage) line.getEvent().getMessage();
+        buf.append( message.getLogChannelId() ).append( "\t" )
+          .append( message.getSubject() ).append( "\n" );
+      } );
+      return buf.toString();
+    } finally {
+      lock.readLock().unlock();
+    }
   }
 
   public void removeBufferLines( List<BufferLine> linesToRemove ) {
-    buffer.removeAll( linesToRemove );
+    lock.writeLock().lock();
+    try {
+      buffer.removeAll( linesToRemove );
+    } finally {
+      lock.writeLock().unlock();
+    }
   }
 
   public List<BufferLine> getBufferLinesBefore( long minTimeBoundary ) {
-    return buffer.stream().filter( line -> line.getEvent().timeStamp < minTimeBoundary )
-      .collect( Collectors.toList() );
+    lock.readLock().lock();
+    try {
+      return buffer.stream().filter( line -> line.getEvent().timeStamp < minTimeBoundary )
+        .collect( Collectors.toList() );
+    } finally {
+      lock.readLock().unlock();
+    }
   }
 
   public void removeBufferLinesBefore( long minTimeBoundary ) {
-    buffer.removeIf( line -> line.getEvent().timeStamp < minTimeBoundary );
+    lock.writeLock().lock();
+    try {
+      buffer.removeIf( line -> line.getEvent().timeStamp < minTimeBoundary );
+    } finally {
+      lock.writeLock().unlock();
+    }
   }
 
   public void addLogggingEvent( KettleLoggingEvent loggingEvent ) {
@@ -249,7 +307,7 @@ public class LoggingBuffer {
     return loggingObject != null && LoggingObjectType.GENERAL.equals( loggingObject.getObjectType() );
   }
 
-  private String getLogChId( BufferLine bufferLine ) {
+  private static String getLogChId( BufferLine bufferLine ) {
     return ( (LogMessage) bufferLine.getEvent().getMessage() ).getLogChannelId();
   }
 }
