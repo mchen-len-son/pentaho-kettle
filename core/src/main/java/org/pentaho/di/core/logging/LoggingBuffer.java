@@ -65,11 +65,11 @@ public class LoggingBuffer {
   public int getLastBufferLineNr() {
     lock.readLock().lock();
     try {
-      if (buffer.size() > 0) {
-        BufferLine line = buffer.get( buffer.size() - 1 );
-        return line != null ? line.getNr() : 0;
+      if ( buffer.size() > 0 ) {
+        return buffer.get( buffer.size() - 1 ).getNr();
+      } else {
+        return 0;
       }
-      return 0;
     } finally {
       lock.readLock().unlock();
     }
@@ -84,16 +84,59 @@ public class LoggingBuffer {
    */
   public List<KettleLoggingEvent> getLogBufferFromTo( List<String> channelId, boolean includeGeneral, int from,
                                                       int to ) {
+    List<KettleLoggingEvent> lines = new ArrayList<>();
+
     lock.readLock().lock();
     try {
-      Stream<BufferLine> bufferStream = buffer.stream().filter( line -> line.getNr() > from && line.getNr() <= to );
-      if ( channelId != null ) {
-        bufferStream = bufferStream.filter( line -> {
-          String logChannelId = getLogChId( line );
-          return includeGeneral ? isGeneral( logChannelId ) || channelId.contains( logChannelId ) : channelId.contains( logChannelId );
-        } );
+      for ( BufferLine line : buffer ) {
+        if ( line.getNr() > from && line.getNr() <= to ) {
+          Object payload = line.getEvent().getMessage();
+          if ( payload instanceof LogMessage ) {
+            LogMessage message = (LogMessage) payload;
+
+            // Typically, the log channel id is the one from the transformation or job running currently.
+            // However, we also want to see the details of the steps etc.
+            // So we need to look at the parents all the way up if needed...
+            //
+            boolean include = channelId == null;
+
+            // See if we should include generic messages
+            //
+            if ( !include ) {
+              LoggingObjectInterface loggingObject =
+                      LoggingRegistry.getInstance().getLoggingObject( message.getLogChannelId() );
+
+              if ( loggingObject != null
+                      && includeGeneral && LoggingObjectType.GENERAL.equals( loggingObject.getObjectType() ) ) {
+                include = true;
+              }
+
+              // See if we should include a certain channel id (zero, one or more)
+              //
+              if ( !include ) {
+                for ( String id : channelId ) {
+                  if ( message.getLogChannelId().equals( id ) ) {
+                    include = true;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if ( include ) {
+
+              try {
+                // String string = layout.format(line.getEvent());
+                lines.add( line.getEvent() );
+              } catch ( Exception e ) {
+                e.printStackTrace();
+              }
+            }
+          }
+        }
       }
-      return bufferStream.map( BufferLine::getEvent ).collect( Collectors.toList() );
+
+      return lines;
     } finally {
       lock.readLock().unlock();
     }
@@ -212,7 +255,17 @@ public class LoggingBuffer {
   public void removeChannelFromBuffer( String id ) {
     lock.writeLock().lock();
     try {
-      buffer.removeIf( line -> id.equals( getLogChId( line ) ) );
+      Iterator<BufferLine> iterator = buffer.iterator();
+      while ( iterator.hasNext() ) {
+        BufferLine bufferLine = iterator.next();
+        Object payload = bufferLine.getEvent().getMessage();
+        if ( payload instanceof LogMessage ) {
+          LogMessage message = (LogMessage) payload;
+          if ( id.equals( message.getLogChannelId() ) ) {
+            iterator.remove();
+          }
+        }
+      }
     } finally {
       lock.writeLock().unlock();
     }
@@ -225,7 +278,19 @@ public class LoggingBuffer {
   public void removeGeneralMessages() {
     lock.writeLock().lock();
     try {
-      buffer.removeIf( line -> isGeneral( getLogChId( line ) ) );
+      Iterator<BufferLine> iterator = buffer.iterator();
+      while ( iterator.hasNext() ) {
+        BufferLine bufferLine = iterator.next();
+        Object payload = bufferLine.getEvent().getMessage();
+        if ( payload instanceof LogMessage ) {
+          LogMessage message = (LogMessage) payload;
+          LoggingObjectInterface loggingObject =
+                  LoggingRegistry.getInstance().getLoggingObject( message.getLogChannelId() );
+          if ( loggingObject != null && LoggingObjectType.GENERAL.equals( loggingObject.getObjectType() ) ) {
+            iterator.remove();
+          }
+        }
+      }
     } finally {
       lock.writeLock().unlock();
     }
@@ -250,11 +315,18 @@ public class LoggingBuffer {
     StringBuilder buf = new StringBuilder( 50000 );
     lock.readLock().lock();
     try {
-      buffer.forEach( line -> {
-        LogMessage message = (LogMessage) line.getEvent().getMessage();
-        buf.append( message.getLogChannelId() ).append( "\t" )
-          .append( message.getSubject() ).append( "\n" );
-      } );
+      for ( BufferLine line : buffer ) {
+        Object payload = line.getEvent().getMessage();
+        if ( payload instanceof LogMessage ) {
+          LogMessage message = (LogMessage) payload;
+          // LoggingObjectInterface loggingObject =
+          // LoggingRegistry.getInstance().getLoggingObject(message.getLogChannelId());
+          buf
+                  .append( message.getLogChannelId()
+                          + "\t" + message.getSubject() + "\t" + message.getMessage() + "\n" );
+        }
+
+      }
       return buf.toString();
     } finally {
       lock.readLock().unlock();
@@ -271,10 +343,17 @@ public class LoggingBuffer {
   }
 
   public List<BufferLine> getBufferLinesBefore( long minTimeBoundary ) {
+    List<BufferLine> linesToRemove = new ArrayList<>();
     lock.readLock().lock();
     try {
-      return buffer.stream().filter( line -> line.getEvent().timeStamp < minTimeBoundary )
-        .collect( Collectors.toList() );
+      for (BufferLine bufferLine : buffer) {
+        if (bufferLine.getEvent().timeStamp < minTimeBoundary) {
+          linesToRemove.add(bufferLine);
+        } else {
+          break;
+        }
+      }
+      return linesToRemove;
     } finally {
       lock.readLock().unlock();
     }

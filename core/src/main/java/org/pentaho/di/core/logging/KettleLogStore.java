@@ -88,9 +88,14 @@ public class KettleLogStore {
 
         if ( maxLogTimeoutMinutes > 0 ) {
           long minTimeBoundary = new Date().getTime() - maxLogTimeoutMinutes * 60 * 1000;
+
+          // Get the old lines to be removed
+          //
+          List<BufferLine> linesToRemove = appender.getBufferLinesBefore( minTimeBoundary );
+
           // Remove all lines at once to prevent concurrent modification problems.
           //
-          appender.removeBufferLinesBefore( minTimeBoundary );
+          appender.removeBufferLines( linesToRemove );
         }
       }
     };
